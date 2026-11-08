@@ -81,6 +81,7 @@ enum window_type {
     WIN_CALCULATOR,
     WIN_CALENDAR,
     WIN_CLOCK,
+    WIN_STOPWATCH,
     WIN_ART,
     WIN_QUIT
 };
@@ -122,6 +123,9 @@ static int menu_open;
 static int viewer_file;
 
 static volatile uint32_t timer_ticks;
+static uint32_t stopwatch_accumulated_ticks;
+static uint32_t stopwatch_started_at;
+static uint8_t stopwatch_running;
 static volatile int mouse_x = SCREEN_W / 2;
 static volatile int mouse_y = SCREEN_H / 2;
 static volatile uint8_t mouse_buttons;
@@ -301,6 +305,7 @@ static uint8_t glyph_row(char character, int row) {
     switch (character) {
         case '-': return row == 3 ? 14 : 0;
         case '+': return row == 3 ? 14 : (row == 1 || row == 2 || row == 4 || row == 5 ? 4 : 0);
+        case '*': return row == 1 || row == 5 ? 10 : (row == 2 || row == 4 ? 4 : (row == 3 ? 10 : 0));
         case '=': return row == 2 || row == 4 ? 14 : 0;
         case ':': return row == 2 || row == 5 ? 4 : 0;
         case '.': return row == 6 ? 4 : 0;
@@ -699,6 +704,9 @@ static void set_window(enum window_type type) {
         case WIN_CLOCK:
             window_rect = (rect_t){190, 130, 420, 280};
             break;
+        case WIN_STOPWATCH:
+            window_rect = (rect_t){190, 130, 420, 280};
+            break;
         case WIN_ART:
             window_rect = (rect_t){88, 48, 624, 510};
             break;
@@ -727,13 +735,13 @@ static void draw_window_frame(const char *title) {
 }
 
 static void draw_home_panel(void) {
-    static const char *apps[4] = {"CALCULATOR", "CALENDAR", "CLOCK", "ARTAPP"};
+    static const char *apps[5] = {"CALCULATOR", "CALENDAR", "CLOCK", "STOPWATCH", "ARTAPP"};
     int i;
     fill_rect(28, 108, 230, 188, color_window);
     draw_rect(28, 108, 230, 188, color_border);
     fill_rect(33, 113, 220, 32, color_title);
     draw_text(43, 122, "APPS", color_white, 2);
-    for (i = 0; i < 4; i++) {
+    for (i = 0; i < 5; i++) {
         draw_text(50, 158 + i * 29, "-", color_text, 2);
         draw_text(70, 158 + i * 29, apps[i], color_text, 2);
     }
@@ -746,7 +754,7 @@ static void draw_popup_menu(void) {
     static const char *file_items[5] = {
         "OPEN FILES", "README.TXT", "NOTES.TXT", "WELCOME.TXT", "CLOSE WINDOW"
     };
-    static const char *tool_items[4] = {"CALCULATOR", "CALENDAR", "CLOCK", "ARTAPP"};
+    static const char *tool_items[5] = {"CALCULATOR", "CALENDAR", "CLOCK", "STOPWATCH", "ARTAPP"};
     int i;
     if (menu_open == 1) {
         x = 596;
@@ -754,7 +762,7 @@ static void draw_popup_menu(void) {
         items = file_items;
     } else if (menu_open == 2) {
         x = 674;
-        rows = 4;
+        rows = 5;
         items = tool_items;
     } else {
         return;
@@ -794,7 +802,7 @@ static void draw_viewer_window(void) {
         line5 = "USE FILE AND TOOLS TO";
         line6 = "EXPLORE";
     } else if (viewer_file == 1) {
-        line1 = "THIS IS VERSION 0.1 TEST";
+        line1 = "THIS IS VERSION 0.2 TEST";
         line2 = "SOME THINGS ARE BUGGED";
         line3 = "YOU CAN TEST EVERYTHING";
         line4 = "IF YOU WANT THE SOURCE CODE";
@@ -899,8 +907,8 @@ static void calc_press(char key) {
 
 static void draw_calculator(void) {
     static const char keys[16] = {
-        '7','8','9','÷',
-        '4','5','6','X',
+        '7','8','9','/',
+        '4','5','6','*',
         '1','2','3','-',
         '0','C','=','+'
     };
@@ -919,7 +927,7 @@ static void draw_calculator(void) {
         label[1] = 0;
         draw_button(x + col * 78, y + 70 + row * 63, 68, 52, label, false);
     }
-    draw_text(x + 2, window_rect.y + window_rect.h - 26, "CALCULATOR v.test", color_muted, 1);
+    draw_text(x + 2, window_rect.y + window_rect.h - 26, "CALCULATOR v.02", color_muted, 1);
 }
 
 static void draw_calendar(void) {
@@ -958,7 +966,7 @@ static void draw_calendar(void) {
         }
         draw_text(cell_x, cell_y, number, color_text, 2);
     }
-    draw_text(window_rect.x + 22, window_rect.y + window_rect.h - 25, "CALENDAR v.test", color_muted, 1);
+    draw_text(window_rect.x + 22, window_rect.y + window_rect.h - 25, "CALENDAR v.02", color_muted, 1);
 }
 
 static void draw_clock(void) {
@@ -982,7 +990,52 @@ static void draw_clock(void) {
     date[5] = '/';
     format_integer(date + 6, now.year);
     draw_text(window_rect.x + 105, window_rect.y + 190, date, color_muted, 2);
-    draw_text(window_rect.x + 92, window_rect.y + 229, "CLOCK v.test", color_muted, 1);
+    draw_text(window_rect.x + 92, window_rect.y + 229, "CLOCK v.02", color_muted, 1);
+}
+
+static uint32_t stopwatch_elapsed_ticks(uint32_t now) {
+    if (stopwatch_running) {
+        return stopwatch_accumulated_ticks + (now - stopwatch_started_at);
+    }
+    return stopwatch_accumulated_ticks;
+}
+
+static void stopwatch_toggle(uint32_t now) {
+    if (stopwatch_running) {
+        stopwatch_accumulated_ticks = stopwatch_elapsed_ticks(now);
+        stopwatch_running = 0;
+    } else {
+        stopwatch_started_at = now;
+        stopwatch_running = 1;
+    }
+    redraw_needed = 1;
+}
+
+static void stopwatch_reset(uint32_t now) {
+    stopwatch_accumulated_ticks = 0;
+    if (stopwatch_running) {
+        stopwatch_started_at = now;
+    }
+    redraw_needed = 1;
+}
+
+static void draw_stopwatch(void) {
+    uint32_t elapsed = stopwatch_elapsed_ticks(timer_ticks);
+    uint32_t total_seconds = elapsed / 100u;
+    char display[12];
+    draw_window_frame("STOPWATCH");
+    format_two_digits(display, (uint8_t)((total_seconds / 3600u) % 100u));
+    display[2] = ':';
+    format_two_digits(display + 3, (uint8_t)((total_seconds / 60u) % 60u));
+    display[5] = ':';
+    format_two_digits(display + 6, (uint8_t)(total_seconds % 60u));
+    display[8] = '.';
+    format_two_digits(display + 9, (uint8_t)(elapsed % 100u));
+    draw_text(window_rect.x + 65, window_rect.y + 95, display, color_text, 4);
+    draw_button(window_rect.x + 45, window_rect.y + 180, 120, 44,
+                stopwatch_running ? "PAUSE" : "START", false);
+    draw_button(window_rect.x + 225, window_rect.y + 180, 120, 44, "RESET", false);
+    draw_text(window_rect.x + 35, window_rect.y + 245, "SPACE START/PAUSE - R RESET", color_muted, 1);
 }
 
 static void clear_paint_canvas(void) {
@@ -1089,6 +1142,7 @@ static void render(void) {
         case WIN_CALCULATOR: draw_calculator(); break;
         case WIN_CALENDAR: draw_calendar(); break;
         case WIN_CLOCK: draw_clock(); break;
+        case WIN_STOPWATCH: draw_stopwatch(); break;
         case WIN_ART: draw_art(); break;
         case WIN_QUIT: draw_quit_dialog(); break;
         default: break;
@@ -1106,7 +1160,8 @@ static void open_tool(int index) {
         calendar_year = now.year;
         set_window(WIN_CALENDAR);
     } else if (index == 2) set_window(WIN_CLOCK);
-    else if (index == 3) set_window(WIN_ART);
+    else if (index == 3) set_window(WIN_STOPWATCH);
+    else if (index == 4) set_window(WIN_ART);
 }
 
 static void shutdown_pc(void) {
@@ -1132,7 +1187,7 @@ static void process_menu_click(int x, int y) {
         }
         return;
     }
-    if (menu_open == 2 && x >= 674 && x < 800 && y >= 36 && y < 36 + 4 * 29) {
+    if (menu_open == 2 && x >= 674 && x < 800 && y >= 36 && y < 36 + 5 * 29) {
         row = (y - 36) / 29;
         menu_open = 0;
         open_tool(row);
@@ -1154,9 +1209,9 @@ static void handle_click(int x, int y) {
         redraw_needed = 1;
         return;
     }
-    if (active_window == WIN_NONE && x >= 28 && x < 258 && y >= 151 && y < 281) {
+    if (active_window == WIN_NONE && x >= 28 && x < 258 && y >= 151 && y < 296) {
         int app = (y - 151) / 29;
-        if (app >= 0 && app < 4) open_tool(app);
+        if (app >= 0 && app < 5) open_tool(app);
         return;
     }
     if (active_window == WIN_NONE) return;
@@ -1190,8 +1245,8 @@ static void handle_click(int x, int y) {
             int col = (x - px) / 78;
             int row = (y - py) / 63;
             static const char keys[16] = {
-                '7','8','9','÷',
-                '4','5','6','X',
+                '7','8','9','/',
+                '4','5','6','*',
                 '1','2','3','-',
                 '0','C','=','+'
             };
@@ -1210,6 +1265,15 @@ static void handle_click(int x, int y) {
                 calendar_month++;
                 if (calendar_month > 11) { calendar_month = 0; calendar_year++; }
                 redraw_needed = 1;
+            }
+            break;
+        case WIN_STOPWATCH:
+            if (y >= window_rect.y + 180 && y < window_rect.y + 224) {
+                if (x >= window_rect.x + 45 && x < window_rect.x + 165) {
+                    stopwatch_toggle(timer_ticks);
+                } else if (x >= window_rect.x + 225 && x < window_rect.x + 345) {
+                    stopwatch_reset(timer_ticks);
+                }
             }
             break;
         case WIN_ART: {
@@ -1270,7 +1334,7 @@ static void handle_key(uint8_t key) {
         return;
     }
     if (menu_open) {
-        if (key >= '1' && key <= '4' && menu_open == 2) {
+        if (key >= '1' && key <= '5' && menu_open == 2) {
             open_tool(key - '1');
         } else if (key == '\n' && menu_open == 1) {
             set_window(WIN_FILES);
@@ -1288,6 +1352,12 @@ static void handle_key(uint8_t key) {
             calendar_month++;
             if (calendar_month > 11) { calendar_month = 0; calendar_year++; }
             redraw_needed = 1;
+        }
+    } else if (active_window == WIN_STOPWATCH) {
+        if (key == ' ') {
+            stopwatch_toggle(timer_ticks);
+        } else if (key == 'r' || key == 'R') {
+            stopwatch_reset(timer_ticks);
         }
     } else if (active_window == WIN_ART) {
         if (key == 'c' || key == 'C') {
@@ -1337,6 +1407,7 @@ static void enable_interrupts(void) {
 void kernel_main(uint32_t magic, uint32_t info_address) {
     multiboot_info_t *info = (multiboot_info_t *)info_address;
     uint32_t second_seen = 0xFFFFFFFFu;
+    uint32_t stopwatch_seen = 0xFFFFFFFFu;
     if (magic != MULTIBOOT_BOOTLOADER_MAGIC) {
         boot_error("OFFOS: INVALID MULTIBOOT BOOT");
     }
@@ -1404,6 +1475,11 @@ void kernel_main(uint32_t magic, uint32_t info_address) {
         if ((active_window == WIN_CLOCK || active_window == WIN_CALENDAR) &&
             ticks / 100u != second_seen) {
             second_seen = ticks / 100u;
+            redraw_needed = 1;
+        }
+        if (active_window == WIN_STOPWATCH && stopwatch_running &&
+            ticks != stopwatch_seen) {
+            stopwatch_seen = ticks;
             redraw_needed = 1;
         }
         if (redraw_needed) render();
